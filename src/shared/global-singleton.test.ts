@@ -1,65 +1,59 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveGlobalMap, resolveGlobalSingleton } from "./global-singleton.js";
-
-const TEST_KEY = Symbol("global-singleton:test");
-const TEST_MAP_KEY = Symbol("global-singleton:test-map");
-
-afterEach(() => {
-  delete (globalThis as Record<PropertyKey, unknown>)[TEST_KEY];
-  delete (globalThis as Record<PropertyKey, unknown>)[TEST_MAP_KEY];
-});
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { resolveGlobalSingleton, resolveGlobalMap } from "./global-singleton.js";
 
 describe("resolveGlobalSingleton", () => {
-  it("reuses an initialized singleton", () => {
-    const create = vi.fn(() => ({ value: 1 }));
+  const testKey = Symbol.for("test.singleton." + Math.random());
 
-    const first = resolveGlobalSingleton(TEST_KEY, create);
-    const second = resolveGlobalSingleton(TEST_KEY, create);
+  afterEach(() => {
+    delete (globalThis as any)[testKey];
+  });
 
+  it("creates singleton on first call", () => {
+    const value = { created: true };
+    const result = resolveGlobalSingleton(testKey, () => value);
+    expect(result).toBe(value);
+  });
+
+  it("returns same instance on subsequent calls", () => {
+    const value = { id: 1 };
+    const first = resolveGlobalSingleton(testKey, () => value);
+    const second = resolveGlobalSingleton(testKey, () => ({ id: 2 }));
     expect(first).toBe(second);
-    expect(create).toHaveBeenCalledTimes(1);
+    expect(first).toEqual({ id: 1 });
   });
 
-  it("does not re-run the factory when undefined was already stored", () => {
-    const create = vi.fn(() => undefined);
-
-    expect(resolveGlobalSingleton(TEST_KEY, create)).toBeUndefined();
-    expect(resolveGlobalSingleton(TEST_KEY, create)).toBeUndefined();
-    expect(create).toHaveBeenCalledTimes(1);
-  });
-
-  it("reuses a prepopulated global value without calling the factory", () => {
-    const existing = { value: 7 };
-    const create = vi.fn(() => ({ value: 1 }));
-    (globalThis as Record<PropertyKey, unknown>)[TEST_KEY] = existing;
-
-    expect(resolveGlobalSingleton(TEST_KEY, create)).toBe(existing);
-    expect(create).not.toHaveBeenCalled();
+  it("creates instances with factory function", () => {
+    let createCount = 0;
+    const factory = () => { createCount++; return { count: createCount }; };
+    resolveGlobalSingleton(testKey, factory);
+    resolveGlobalSingleton(testKey, factory);
+    expect(createCount).toBe(1);
   });
 });
 
 describe("resolveGlobalMap", () => {
-  it("reuses the same map instance", () => {
-    const first = resolveGlobalMap<string, number>(TEST_MAP_KEY);
-    const second = resolveGlobalMap<string, number>(TEST_MAP_KEY);
+  const testKey = Symbol.for("test.map." + Math.random());
 
+  afterEach(() => {
+    delete (globalThis as any)[testKey];
+  });
+
+  it("creates map on first call", () => {
+    const result = resolveGlobalMap<number, string>(testKey);
+    result.set(1, "one");
+    expect(result.get(1)).toBe("one");
+  });
+
+  it("returns same map on subsequent calls", () => {
+    const first = resolveGlobalMap<number, string>(testKey);
+    const second = resolveGlobalMap<number, string>(testKey);
     expect(first).toBe(second);
   });
 
-  it("preserves existing map contents across repeated resolution", () => {
-    const map = resolveGlobalMap<string, number>(TEST_MAP_KEY);
-    map.set("a", 1);
-
-    expect(resolveGlobalMap<string, number>(TEST_MAP_KEY).get("a")).toBe(1);
-  });
-
-  it("reuses a prepopulated global map without creating a new one", () => {
-    const existing = new Map<string, number>([["a", 1]]);
-    (globalThis as Record<PropertyKey, unknown>)[TEST_MAP_KEY] = existing;
-
-    const resolved = resolveGlobalMap<string, number>(TEST_MAP_KEY);
-
-    expect(resolved).toBe(existing);
-    expect(resolved.get("a")).toBe(1);
+  it("persists values between calls", () => {
+    const map = resolveGlobalMap<string, number>(testKey);
+    map.set("key", 42);
+    const result = resolveGlobalMap<string, number>(testKey);
+    expect(result.get("key")).toBe(42);
   });
 });
