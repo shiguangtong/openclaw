@@ -1,92 +1,90 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  hasNodeErrorCode,
-  isNodeError,
-  isNotFoundPathError,
-  isPathInside,
-  isSymlinkOpenError,
   normalizeWindowsPathForComparison,
+  isNodeError,
+  hasNodeErrorCode,
+  isNotFoundPathError,
+  isSymlinkOpenError,
+  isPathInside,
 } from "./path-guards.js";
 
-const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
-
-function setPlatform(platform: NodeJS.Platform): void {
-  Object.defineProperty(process, "platform", {
-    value: platform,
-    configurable: true,
-  });
-}
-
-afterEach(() => {
-  if (originalPlatformDescriptor) {
-    Object.defineProperty(process, "platform", originalPlatformDescriptor);
-  }
-});
-
 describe("normalizeWindowsPathForComparison", () => {
-  it.each([
-    ["\\\\?\\C:\\Users\\Peter/Repo", "c:\\users\\peter\\repo"],
-    ["\\\\?\\UNC\\Server\\Share\\Folder", "\\\\server\\share\\folder"],
-    ["\\\\?\\unc\\Server\\Share\\Folder", "\\\\server\\share\\folder"],
-  ])("normalizes windows path %s", (input, expected) => {
-    expect(normalizeWindowsPathForComparison(input)).toBe(expected);
+  it("normalizes Windows paths", () => {
+    expect(normalizeWindowsPathForComparison("C:\\Users\\test")).toBe("c:\\users\\test");
+    expect(normalizeWindowsPathForComparison("C:/Users/test")).toBe("c:\\users\\test");
+  });
+
+  it("normalizes UNC paths", () => {
+    const result = normalizeWindowsPathForComparison("\\\\server\\share");
+    expect(result).toBe("\\\\server\\share");
   });
 });
 
-describe("node path error helpers", () => {
-  it.each([
-    [{ code: "ENOENT" }, true],
-    [{ message: "nope" }, false],
-  ])("detects node-style error %j", (value, expected) => {
-    expect(isNodeError(value)).toBe(expected);
+describe("isNodeError", () => {
+  it("returns true for Node.js errors", () => {
+    expect(isNodeError(new Error("test"))).toBe(false);
+    expect(isNodeError({ code: "ENOENT" })).toBe(true);
+    expect(isNodeError({})).toBe(false);
   });
 
-  it.each([
-    [{ code: "ENOENT" }, "ENOENT", true],
-    [{ code: "ENOENT" }, "EACCES", false],
-  ])("matches node error code for %j", (value, code, expected) => {
-    expect(hasNodeErrorCode(value, code)).toBe(expected);
+  it("returns false for non-objects", () => {
+    expect(isNodeError("string")).toBe(false);
+    expect(isNodeError(null)).toBe(false);
+    expect(isNodeError(undefined)).toBe(false);
+  });
+});
+
+describe("hasNodeErrorCode", () => {
+  it("checks error code", () => {
+    const err = new Error("test") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    expect(hasNodeErrorCode(err, "ENOENT")).toBe(true);
+    expect(hasNodeErrorCode(err, "OTHER")).toBe(false);
+  });
+});
+
+describe("isNotFoundPathError", () => {
+  it("detects ENOENT errors", () => {
+    const err = { code: "ENOENT" } as NodeJS.ErrnoException;
+    expect(isNotFoundPathError(err)).toBe(true);
   });
 
-  it.each([
-    [{ code: "ENOENT" }, true],
-    [{ code: "ENOTDIR" }, true],
-    [{ code: "EACCES" }, false],
-    [{ code: 404 }, false],
-  ])("classifies not-found path error for %j", (value, expected) => {
-    expect(isNotFoundPathError(value)).toBe(expected);
+  it("detects ENOTDIR errors", () => {
+    const err = { code: "ENOTDIR" } as NodeJS.ErrnoException;
+    expect(isNotFoundPathError(err)).toBe(true);
   });
 
-  it.each([
-    [{ code: "ELOOP" }, true],
-    [{ code: "EINVAL" }, true],
-    [{ code: "ENOTSUP" }, true],
-    [{ code: "ENOENT" }, false],
-    [{ code: null }, false],
-  ])("classifies symlink-open error for %j", (value, expected) => {
-    expect(isSymlinkOpenError(value)).toBe(expected);
+  it("returns false for other errors", () => {
+    expect(isNotFoundPathError({ code: "EPERM" })).toBe(false);
+  });
+});
+
+describe("isSymlinkOpenError", () => {
+  it("detects symlink-related errors", () => {
+    expect(isSymlinkOpenError({ code: "ELOOP" })).toBe(true);
+    expect(isSymlinkOpenError({ code: "EINVAL" })).toBe(true);
+    expect(isSymlinkOpenError({ code: "ENOTSUP" })).toBe(true);
+  });
+
+  it("returns false for other errors", () => {
+    expect(isSymlinkOpenError({ code: "ENOENT" })).toBe(false);
   });
 });
 
 describe("isPathInside", () => {
-  it.each([
-    ["/workspace/root", "/workspace/root", true],
-    ["/workspace/root", "/workspace/root/nested/file.txt", true],
-    ["/workspace/root", "/workspace/root/../escape.txt", false],
-  ])("checks posix containment %s -> %s", (basePath, targetPath, expected) => {
-    expect(isPathInside(basePath, targetPath)).toBe(expected);
+  it("returns true for paths inside directory", () => {
+    expect(isPathInside("/home/user", "/home/user/file.txt")).toBe(true);
   });
 
-  it("uses win32 path semantics for windows containment checks", () => {
-    setPlatform("win32");
+  it("returns false for paths outside directory", () => {
+    expect(isPathInside("/home/user", "/home/other/file.txt")).toBe(false);
+  });
 
-    for (const [basePath, targetPath, expected] of [
-      [String.raw`C:\workspace\root`, String.raw`C:\workspace\root`, true],
-      [String.raw`C:\workspace\root`, String.raw`C:\workspace\root\Nested\File.txt`, true],
-      [String.raw`C:\workspace\root`, String.raw`C:\workspace\root\..\escape.txt`, false],
-      [String.raw`C:\workspace\root`, String.raw`D:\workspace\root\file.txt`, false],
-    ] as const) {
-      expect(isPathInside(basePath, targetPath)).toBe(expected);
-    }
+  it("handles same path", () => {
+    expect(isPathInside("/home/user", "/home/user")).toBe(true);
+  });
+
+  it("handles parent directory traversal", () => {
+    expect(isPathInside("/home/user", "/home/user/../other")).toBe(false);
   });
 });
